@@ -1,0 +1,151 @@
+name: Deploy Mobile App to Firebase App Distribution
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'apps/mobile/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/mobile/**'
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Platform to deploy'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - ios
+          - android
+
+env:
+  WORKING_DIRECTORY: apps/mobile
+
+jobs:
+  deploy:
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: ${{ env.WORKING_DIRECTORY }}/package-lock.json
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.0'
+          bundler-cache: true
+          working-directory: ${{ env.WORKING_DIRECTORY }}
+
+      - name: Setup Java (for Android)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install Node dependencies
+        run: |
+          cd ${{ env.WORKING_DIRECTORY }}
+          npm ci
+
+      - name: Install Ruby dependencies
+        run: |
+          cd ${{ env.WORKING_DIRECTORY }}
+          bundle install
+
+      - name: Setup environment variables
+        run: |
+          cd ${{ env.WORKING_DIRECTORY }}
+          echo "APPLE_ID=${{ secrets.APPLE_ID }}" >> .env
+          echo "TEAM_ID=${{ secrets.TEAM_ID }}" >> .env
+          echo "ITC_TEAM_ID=${{ secrets.ITC_TEAM_ID }}" >> .env
+          echo "APP_STORE_CONNECT_API_KEY_ID=${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}" >> .env
+          echo "APP_STORE_CONNECT_API_ISSUER_ID=${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}" >> .env
+          echo "APP_STORE_CONNECT_API_KEY_PATH=./fastlane/AuthKey.p8" >> .env
+          echo "MATCH_GIT_URL=${{ secrets.MATCH_GIT_URL }}" >> .env
+          echo "MATCH_PASSWORD=${{ secrets.MATCH_PASSWORD }}" >> .env
+          echo "ANDROID_KEYSTORE_PATH=./android/app/upload-keystore.jks" >> .env
+          echo "ANDROID_KEYSTORE_PASSWORD=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" >> .env
+          echo "ANDROID_KEY_ALIAS=${{ secrets.ANDROID_KEY_ALIAS }}" >> .env
+          echo "ANDROID_KEY_PASSWORD=${{ secrets.ANDROID_KEY_PASSWORD }}" >> .env
+          echo "FIREBASE_IOS_APP_ID=${{ secrets.FIREBASE_IOS_APP_ID }}" >> .env
+          echo "FIREBASE_ANDROID_APP_ID=${{ secrets.FIREBASE_ANDROID_APP_ID }}" >> .env
+          echo "FIREBASE_CLI_TOKEN=${{ secrets.FIREBASE_CLI_TOKEN }}" >> .env
+
+      - name: Create App Store Connect API key
+        if: github.event.inputs.platform != 'android'
+        run: |
+          cd ${{ env.WORKING_DIRECTORY }}
+          echo "${{ secrets.APP_STORE_CONNECT_API_KEY }}" | base64 -d > ./fastlane/AuthKey.p8
+
+      - name: Create Android keystore
+        if: github.event.inputs.platform != 'ios'
+        run: |
+          cd ${{ env.WORKING_DIRECTORY }}
+          echo "${{ secrets.ANDROID_KEYSTORE }}" | base64 -d > ./android/app/upload-keystore.jks
+
+      - name: Create Firebase credentials
+        run: |
+          cd ${{ env.WORKING_DIRECTORY }}
+          echo "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}" | base64 -d > ./fastlane/firebase-service-account.json
+
+      - name: Prebuild Expo project
+        run: |
+          cd ${{ env.WORKING_DIRECTORY }}
+          npx expo prebuild --clean
+
+      - name: Deploy iOS
+        if: github.event.inputs.platform == 'ios' || github.event.inputs.platform == 'all' || github.event.inputs.platform == ''
+        run: |
+          cd ${{ env.WORKING_DIRECTORY }}
+          bundle exec fastlane ios beta
+
+      - name: Deploy Android
+        if: github.event.inputs.platform == 'android' || github.event.inputs.platform == 'all' || github.event.inputs.platform == ''
+        run: |
+          cd ${{ env.WORKING_DIRECTORY }}
+          bundle exec fastlane android beta
+
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: |
+            ${{ env.WORKING_DIRECTORY }}/build/
+            ${{ env.WORKING_DIRECTORY }}/android/app/build/outputs/
+          retention-days: 7
+
+      - name: Notify Slack on success
+        if: success() && github.ref == 'refs/heads/main'
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          text: 'Mobile app deployed successfully to Firebase App Distribution! 🚀'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Notify Slack on failure
+        if: failure() && github.ref == 'refs/heads/main'
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          text: 'Mobile app deployment failed! ❌'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
