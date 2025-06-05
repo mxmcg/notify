@@ -1,0 +1,209 @@
+# This file contains the fastlane.tools configuration
+# You can find the documentation at https://docs.fastlane.tools
+#
+# For a list of all available actions, check out
+#
+#     https://docs.fastlane.tools/actions
+#
+# For a list of all available plugins, check out
+#
+#     https://docs.fastlane.tools/plugins/available-plugins
+#
+
+# Uncomment the line if you want fastlane to automatically update itself
+# update_fastlane
+
+def apple_ready?
+  ENV["APP_STORE_CONNECT_API_KEY_ID"] &&
+  ENV["APP_STORE_CONNECT_API_ISSUER_ID"] &&
+  ENV["APP_STORE_CONNECT_API_KEY_PATH"] &&
+  ENV["MATCH_GIT_URL"] &&
+  ENV["MATCH_PASSWORD"]
+end
+
+default_platform(:ios)
+
+# Shared configuration
+WORKSPACE_PATH = "../notify-monorepo.xcworkspace"
+PROJECT_PATH = "./ios/notify.xcodeproj"
+SCHEME = "notify"
+
+# Firebase App Distribution groups
+FIREBASE_GROUPS = "internal-testers"
+
+platform :ios do
+  desc "Build and deploy iOS app to Firebase App Distribution"
+  lane :beta do
+    # Ensure we're on a clean git state
+    ensure_git_status_clean
+
+    # Set up code signing with Match
+    setup_code_signing
+
+    # Increment build number
+    increment_build_number_in_xcodeproj(
+      xcodeproj: PROJECT_PATH,
+      target: SCHEME
+    )
+
+    # Build the app
+    build_ios_app(
+      workspace: WORKSPACE_PATH,
+      scheme: SCHEME,
+      export_method: "development",
+      output_directory: "./build",
+      output_name: "notify.ipa",
+      clean: true,
+      configuration: "Release",
+      export_options: {
+        method: "development",
+        provisioningProfiles: {
+          "com.dlvr.notify" => "match Development com.dlvr.notify"
+        }
+      }
+    )
+
+    # Upload to Firebase App Distribution
+    firebase_app_distribution(
+      app: ENV["FIREBASE_IOS_APP_ID"],
+      ipa_path: "./build/notify.ipa",
+      groups: FIREBASE_GROUPS,
+      release_notes: generate_release_notes
+    )
+
+    # Clean up
+    clean_build_artifacts
+
+    # Commit version bump
+    commit_version_bump(
+      message: "Bump iOS build number to #{get_build_number(xcodeproj: PROJECT_PATH)}",
+      xcodeproj: PROJECT_PATH
+    )
+  end
+
+  desc "Set up code signing using Match"
+  private_lane :setup_code_signing do
+    app_store_connect_api_key(
+      key_id: ENV["APP_STORE_CONNECT_API_KEY_ID"],
+      issuer_id: ENV["APP_STORE_CONNECT_API_ISSUER_ID"],
+      key_filepath: ENV["APP_STORE_CONNECT_API_KEY_PATH"]
+    )
+
+    match(
+      type: "development",
+      app_identifier: "com.dlvr.notify",
+      git_url: ENV["MATCH_GIT_URL"],
+      readonly: is_ci,
+      force_for_new_devices: true
+    )
+  end
+
+  desc "Register new devices"
+  lane :register_devices do
+    register_devices(
+      devices_file: "./fastlane/devices.txt"
+    )
+    
+    match(
+      type: "development",
+      force_for_new_devices: true
+    )
+  end
+
+  desc "Sync certificates and profiles"
+  lane :sync_certs do
+    match(
+      type: "development",
+      readonly: false,
+      force: true
+    )
+  end
+end
+
+platform :android do
+  desc "Build and deploy Android app to Firebase App Distribution"
+  lane :beta do
+    # Ensure we're on a clean git state
+    ensure_git_status_clean
+
+    # Increment version code
+    android_set_version_code(
+      version_code: Time.now.to_i,
+      gradle_file: "./android/app/build.gradle"
+    )
+
+    # Build the app
+    gradle(
+      task: "clean assembleRelease",
+      project_dir: "./android",
+      print_command: true,
+      properties: {
+        "android.injected.signing.store.file" => ENV["ANDROID_KEYSTORE_PATH"],
+        "android.injected.signing.store.password" => ENV["ANDROID_KEYSTORE_PASSWORD"],
+        "android.injected.signing.key.alias" => ENV["ANDROID_KEY_ALIAS"],
+        "android.injected.signing.key.password" => ENV["ANDROID_KEY_PASSWORD"]
+      }
+    )
+
+    # Upload to Firebase App Distribution
+    firebase_app_distribution(
+      app: ENV["FIREBASE_ANDROID_APP_ID"],
+      android_artifact_type: "APK",
+      android_artifact_path: "./android/app/build/outputs/apk/release/app-release.apk",
+      groups: FIREBASE_GROUPS,
+      release_notes: generate_release_notes
+    )
+
+    # Clean up
+    clean_build_artifacts
+
+    # Commit version bump
+    git_commit(
+      path: "./android/app/build.gradle",
+      message: "Bump Android version code"
+    )
+  end
+
+  desc "Build debug APK"
+  lane :debug do
+    gradle(
+      task: "clean assembleDebug",
+      project_dir: "./android",
+      print_command: true
+    )
+  end
+end
+
+# Shared lanes
+desc "Deploy both iOS and Android to Firebase App Distribution"
+lane :deploy_all do
+  sh("cd .. && npx expo prebuild --clean")
+
+  if apple_ready?
+    ios beta          # runs Match + uploads .ipa
+  else
+    UI.message("⏭  Skipping iOS – Apple Developer not ready yet")
+  end
+
+  android beta        # always runs
+  push_to_git_remote
+end
+
+desc "Generate release notes from git commits"
+private_lane :generate_release_notes do
+  changelog = changelog_from_git_commits(
+    commits_count: 10,
+    pretty: "- %s"
+  )
+  
+  "Build: #{Time.now.strftime('%Y-%m-%d %H:%M')}\n\nChanges:\n#{changelog}"
+end
+
+# Error handling
+error do |lane, exception|
+  notification(
+    title: "Fastlane Error",
+    message: "#{lane} failed: #{exception.message}",
+    open: "https://firebase.google.com/console"
+  )
+end

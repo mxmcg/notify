@@ -1,0 +1,5 @@
+# Add your test devices here for iOS development
+# Format: Device Name<tab>Device UDID
+# Example:
+# John's iPhone	00008020-001234567890123A
+# Jane's iPad	00008103-001A2B3C4D5E6F7A

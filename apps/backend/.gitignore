@@ -1,0 +1,88 @@
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env*.local
+
+# typescript
+*.tsbuildinfo
+
+app-example
+
+
+# Expo
+.expo
+.expo-shared
+expo-env.d.ts
+
+# React Native
+node_modules/
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# Environment variables
+.env
+.env.*
+.env*.local
+!.env.template
+
+# macOS
+.DS_Store
+*.pem
+
+# Generated files
+dist/
+web-build/
+builds/
+src/types/generated
+ios/
+android/
+
+# Development tools
+.idea
+.vscode
+Gemfile.lock
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots
+fastlane/test_output
+
+# Metro
+.metro-health-check*
+
+# TypeScript
+*.tsbuildinfo
+.lint-cache/

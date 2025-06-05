@@ -1,0 +1,49 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Task {
+  id             String   @id @default(uuid())
+  title          String   // Notification title
+  description    String   // Notification description
+  scheduledTime  DateTime // When the notification should be sent
+  repeatType     String   // 'none', 'daily', 'weekly', 'monthly'
+  isEnabled      Boolean  @default(true)
+  notificationId String?  // Mobile notification ID for cancellation
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  
+  // LLM Processing fields (keeping for backward compatibility)
+  llmResponses LLMResponse[]
+  
+  @@map("tasks")
+}
+
+model LLMResponse {
+  id         String   @id @default(uuid())
+  taskId     String
+  prompt     String   // Processed prompt sent to LLM
+  response   String   // LLM response
+  model      String   // e.g., "gpt-4", "gpt-3.5-turbo"
+  tokens     Int?     // Token count
+  cost       Float?   // Cost in USD
+  status     ResponseStatus @default(PENDING)
+  error      String?  // Error message if failed
+  createdAt  DateTime @default(now())
+  
+  task       Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  
+  @@map("llm_responses")
+}
+
+enum ResponseStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
